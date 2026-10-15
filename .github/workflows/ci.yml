@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push: {branches: [main]}
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r backend/requirements-dev.txt
+      - name: ruff
+        run: ruff check backend
+      - name: pytest
+        working-directory: backend
+        env:
+          DATA_DIR: /tmp/ds-ci
+          JWT_SECRET: ci-secret-ci-secret-ci-secret-32
+        run: pytest -q --cov=. --cov-report=term-missing
+      - name: selftest smoke
+        working-directory: backend
+        run: python selftest.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint --if-present
+        working-directory: frontend
+      - run: npm run test:run
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build api image
+        run: docker build -f backend/Dockerfile -t akalonics-api .
+      - name: build frontend image
+        run: docker build -t akalonics-web ./frontend
+      - name: compose config is valid
+        run: docker compose config -q

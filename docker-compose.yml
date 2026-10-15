@@ -1,0 +1,87 @@
+# One command brings up the whole stack:  docker compose up --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: akalonics
+      POSTGRES_PASSWORD: akalonics
+      POSTGRES_DB: akalonics
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U akalonics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports: ["6379:6379"]
+
+  minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports: ["9000:9000", "9001:9001"]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment: &backend_env
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql+asyncpg://akalonics:akalonics@postgres:5432/akalonics
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: s3
+      S3_BUCKET: akalonics
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      JWT_SECRET: compose-dev-secret-change-me-32-bytes-long
+      ALLOWED_ORIGINS: http://localhost:8080,http://localhost:5173
+      COOKIE_SAMESITE: lax
+      USE_WORKER: "true"
+      MAX_UPLOAD_MB: "25"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    ports: ["8000:8000"]
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment: *backend_env
+    command: ["arq", "worker.WorkerSettings"]
+    depends_on:
+      api: {condition: service_started}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: ""
+    depends_on: [api]
+    ports: ["8080:80"]
+
+volumes:
+  pgdata:
+  miniodata:

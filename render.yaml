@@ -1,0 +1,67 @@
+# Render Blueprint for AkaLonics.
+#
+# Deploy: push this repo to GitHub, then in the Render dashboard choose
+# "New +" -> "Blueprint" and point it at the repo. Render reads this file
+# and creates all three resources below in one shot.
+#
+# Render gives every web service a public URL of the form
+# https://<service-name>.onrender.com (falling back to a random suffix only
+# if that name is already taken globally). The two env vars below assume the
+# names aren't taken -- if Render shows you a different URL after deploying,
+# copy the *actual* URLs into these two env vars in the dashboard and
+# redeploy both services once. See README_DEPLOYMENT.md for the full walk-
+# through, including that step.
+
+databases:
+  - name: akalonics-db
+    plan: free            # bump to "starter" or higher for production traffic
+    databaseName: akalonics
+    user: akalonics
+
+services:
+  # --- backend: FastAPI, built from backend/Dockerfile -----------------
+  - type: web
+    name: akalonics-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    plan: free            # bump to "starter" for no cold starts + a persistent disk
+    healthCheckPath: /api/health
+    envVars:
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: akalonics-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true          # Render generates + stores a random secret
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: STORAGE_BACKEND
+        value: local
+      - key: ALLOWED_ORIGINS
+        value: https://akalonics-frontend.onrender.com
+      - key: GUEST_MODE
+        value: "true"
+      - key: NL_CHARTS_ENABLED
+        value: "false"       # flip to "true" and add ANTHROPIC_API_KEY to enable the NL command bar
+
+  # --- frontend: static Vite/React build --------------------------------
+  - type: web
+    name: akalonics-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE
+        value: https://akalonics-api.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
